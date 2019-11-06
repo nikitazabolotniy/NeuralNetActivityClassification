@@ -1,0 +1,186 @@
+function parameters = NN(input, label)
+%start with one hidden layer of the same size as the number of labels
+% weight matrix where each layer in the third dimension corresponds to a 
+% layer of weights in the NN 
+% For each such 2D matrix a column vector is a single weight vector same
+% size as the input, number of column vectors is the number of nodes
+% in the layer to which the weights lead
+
+number_of_labels = size(unique(label),1);
+% number of nodes in layers 1 and 2 respectively
+number_of_nodes = [100, 100, number_of_labels];
+number_of_layers = length(number_of_nodes);
+number_of_features_ = size(input,2);
+
+means = zeros(1,number_of_features_);
+stds = zeros(1,number_of_features_);
+for feature = 1:number_of_features_
+    means(feature) = mean(input(:,feature));
+    stds(feature) = std(input(:,feature));
+end
+
+for i = 1:number_of_features_
+    input(:,i) = (input(:,i) - means(i))./stds(i);
+end
+
+
+input = [input, ones(size(input,1),1)];
+number_of_features = size(input,2);
+
+weights = cell(1, number_of_layers);
+for laynum = 1:number_of_layers
+    if laynum == 1
+        %includes biases for first layer, also no weights to go into the last node
+        %because it should remain 1
+        weights{laynum} = randn(number_of_features, number_of_nodes(laynum)-1);
+    elseif laynum == number_of_layers
+        % last layer has as many weights as outputs
+        weights{laynum} = randn(number_of_nodes(laynum-1), number_of_nodes(laynum));
+    else
+        %weights for other layers, weight term taken into account
+        weights{laynum} = randn(number_of_nodes(laynum-1), number_of_nodes(laynum)-1);
+    end
+end
+
+% matrix to store unit outputs 
+%need to make hidden units and outputs units separately
+unit_outputs = cell(1, number_of_layers);
+for laynum = 1:number_of_layers
+    if laynum ~= number_of_layers
+        unit_outputs{laynum} = zeros(number_of_nodes(laynum),1);
+        %to multiply with bias 
+        unit_outputs{laynum}(end) = 1;
+    else
+        unit_outputs{laynum} = zeros(number_of_labels,1);
+    end
+end
+
+%matrix to store deltas
+deltas = cell(1,number_of_layers);
+for laynum = 1:number_of_layers
+        deltas{laynum} = zeros(size(unit_outputs{laynum},1), 1);
+end
+
+    
+for epochs = 1:1
+    for input_num = 1:size(input,1)
+        %input num will be the index for data
+        l_rate = 0.1;%/sqrt(sqrt(input_num));
+        %this is a row vector
+        example = input(input_num,:);
+        example_label = label(input_num);
+        %get corresponding label for random sample
+        binary_label = zeros(number_of_labels,1);
+        % desired index of the label is set to 1
+        binary_label(example_label) = 1;
+
+        % propagate information forward
+        % the first layer of input values is in the form of a row vector
+        % compute values for hidden layers
+        for layer_num = 1:number_of_layers
+                % gotta loop over layers, for each iteration of a loop over examples
+                if layer_num == 1
+                    layer_output = example*weights{layer_num};
+                    %want to leave the term for bias = 1
+                    unit_outputs{layer_num}(1:end-1) = layer_output';
+                    %apply sigmoid to the layer
+                    unit_outputs{layer_num}(1:end-1) = sigmoid(unit_outputs{layer_num}(1:end-1));
+                elseif layer_num == number_of_layers
+                    %compute final layer activation and values
+                    layer_output = unit_outputs{layer_num-1}'*weights{layer_num};
+                    %for regression don't take any function of that
+                    unit_outputs{layer_num} = layer_output';
+                    unit_outputs{layer_num} = softmax(unit_outputs{layer_num});
+                else
+                    %compute for hidden layers
+                    layer_output = unit_outputs{layer_num-1}'*weights{layer_num};
+                    unit_outputs{layer_num}(1:end-1) = layer_output';
+                    unit_outputs{layer_num}(1:end-1) = sigmoid(...
+                        unit_outputs{layer_num}(1:end-1));
+                end
+        end
+
+
+        % need to save delta values because as we update weights won't be able
+        % to update weights in previous layers becsause that would require
+        % values of weights before we updated them
+        for jj = number_of_layers:-1:1 %number of layers
+            if jj == number_of_layers
+                %last layer deltas
+                for ii = 1:size(unit_outputs{jj},1)
+                    deltas{jj}(ii) = delta_last(ii, unit_outputs, number_of_layers, binary_label, number_of_labels);
+                end
+            elseif jj == (number_of_layers-1)
+                %want to update the next to last layers using all the deltas
+                for ii = 1:size(unit_outputs{jj},1)
+                    deltas{jj}(ii) =  differentiate_sigmoid(...
+                        unit_outputs{jj}(ii))*(weights{jj+1}(ii,:)*deltas{jj+1});
+                end
+            else
+                %or each layer and for each delta at a node, cycle through all
+                %deltas at next levels
+                for ii = 1:size(unit_outputs{jj},1)
+                    deltas{jj}(ii) =  differentiate_sigmoid(...
+                        unit_outputs{jj}(ii))*(weights{jj+1}(ii,:)*deltas{jj+1}(1:end-1));
+                end
+            end
+        end
+
+
+        % weight update
+        % w_ji
+        %ADD REGULARISATION HERE
+        for layer_num = number_of_layers:-1:1
+            %accounts for bias term because iterate over number of weights
+            if layer_num == 1
+                for i = 1:size(weights{layer_num},1)
+                    for j = 1:size(weights{layer_num},2)
+                        weights{layer_num}(i,j) = weights{layer_num}(i,j) - ...
+                            l_rate*(deltas{layer_num}(j))*example(i) + 0.0001*weights{layer_num}(i,j);% +0.001*weights(1).a(i,j)
+                    end
+                end
+            else
+                for i = 1:size(weights{layer_num},1)
+                    for j = 1:size(weights{layer_num},2)
+                        weights{layer_num}(i,j) = weights{layer_num}(i,j) - ...
+                            l_rate*(deltas{layer_num}(j)*unit_outputs{layer_num-1}(i) + 0.0001*weights{layer_num}(i,j));%+ 0.001*weights(2).a(i,j)
+                    end
+                end
+            end
+        end
+    end
+end
+parameters.weights = weights;
+
+function hidden_unit_out = sigmoid(x)
+    alpha = 2.5;
+    % can be applied to scalars and vectors
+    hidden_unit_out = 1./(1+exp(-alpha*x));
+end
+
+function diff_sigmoid = differentiate_sigmoid(x)
+    %refers to the sigmoid above
+    diff_sigmoid = sigmoid(x)*(1 - sigmoid(x));
+end
+
+function last_layer_out = softmax(input)
+    last_layer_out = exp(input)/(sum(exp(input)));
+end
+
+function delta_last_layer = delta_last(j, unit_outp, layer_num, binary_lab, num_labels)
+    % j is the output, i are inputs
+    % times the difference by sigmoid (already computed)
+    [~, output_label] = max(unit_outp{layer_num});
+    output_binary_label = zeros(num_labels,1);
+    % desired index of the label is set to 1
+    output_binary_label(output_label) = 1;
+    delta_last_layer = output_binary_label(j) - binary_lab(j);
+end
+%parameters = NN(partitioned_data.train_inp, partitioned_data.train_label)
+%parameters = NN(score(:,1:30), partitioned_data.train_label)
+end
+
+    
+
+
+
